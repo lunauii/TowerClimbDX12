@@ -3,5 +3,5 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="TowerClimbDX12.vcxproj" />
+  <Project Path="TowerClimbDX12.vcxproj" Id="678ef807-90e2-4733-b20b-a8debba5d45f" />
 </Solution>
