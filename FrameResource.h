@@ -6,6 +6,8 @@
 struct ObjectConstants {
     DirectX::XMFLOAT4X4 World = MathHelper::Identity4x4();
     DirectX::XMFLOAT4X4 TexTransform = MathHelper::Identity4x4();
+    UINT MaterialIndex = 0;
+    DirectX::XMFLOAT3 Pad = {0.0f, 0.0f, 0.0f};
 };
 
 struct PassConstants {

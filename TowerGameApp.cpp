@@ -161,6 +161,8 @@ void TowerGameApp::Draw(const GameTimer& gt) {
 
         ObjectConstants objCB;
         XMStoreFloat4x4(&objCB.World, XMMatrixTranspose(modelWorld));
+        // Platforms (indices >= 2) get material 1 (checkered), others get 0
+        objCB.MaterialIndex = (ri->ObjCBIndex >= 2) ? 1 : 0;
         mCurrFrameResource->ObjectCB->CopyData(ri->ObjCBIndex, objCB);
 
         auto addr = mCurrFrameResource->ObjectCB->Resource()->GetGPUVirtualAddress() + (ri->ObjCBIndex * objCBByteSize);

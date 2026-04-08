@@ -9,6 +9,9 @@ cbuffer cbPass : register(b0)
 cbuffer cbObject : register(b1)
 {
     float4x4 gWorld;
+    float4x4 gTexTransform;
+    uint gMaterialIndex;
+    float3 gObjPad;
 };
 
 struct VertexIn
@@ -23,6 +26,7 @@ struct VertexOut
     float4 PosH : SV_POSITION;
     float3 PosW : POSITION;
     float3 NormalW : NORMAL;
+    float2 TexC : TEXCOORD;
 };
 
 VertexOut VS(VertexIn vin)
@@ -32,6 +36,7 @@ VertexOut VS(VertexIn vin)
     vout.PosW = posW.xyz;
     vout.PosH = mul(posW, gViewProj);
     vout.NormalW = mul(vin.NormalL, (float3x3) gWorld);
+    vout.TexC = vin.TexC;
     return vout;
 }
 
@@ -57,9 +62,17 @@ float4 PS(VertexOut pin) : SV_Target
 
     // Final color logic
     float3 baseColor = float3(0.5f, 0.5f, 0.5f); // Grey stone
-    
+
+    // Add procedural checkerboard texture for the platforms
+    if (gMaterialIndex == 1)
+    {
+        float2 uv = pin.TexC * 5.0f; // Scale texture coordinates
+        float checker = fmod(abs(floor(uv.x) + floor(uv.y)), 2.0f);
+        baseColor = lerp(float3(0.1f, 0.1f, 0.1f), float3(0.9f, 0.7f, 0.1f), checker); // Yellow and dark grey checker pattern
+    }
+
     // Make the floor (grid) a different color (Dark Blue Carpet)
-    if (pin.PosW.y < 0.1f)
+    if (pin.PosW.y < 0.1f && gMaterialIndex == 0)
         baseColor = float3(0.2f, 0.2f, 0.4f);
 
     float3 finalLight = ambient + sunColor + (pointColor * 2.0f);

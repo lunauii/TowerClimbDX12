@@ -45,13 +45,13 @@
     <ClCompile Include="Common\MathHelper.cpp">
       <Filter>Common</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\Users\bduva\Desktop\DirectX_Textbook\d3d12book\Common\d3dApp.cpp">
+    <ClCompile Include="..\..\..\Downloads\d3dApp.cpp">
       <Filter>Common</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\Users\bduva\Desktop\DirectX_Textbook\d3d12book\Common\d3dUtil.cpp">
+    <ClCompile Include="..\..\..\Downloads\d3dUtil.cpp">
       <Filter>Common</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\Users\bduva\Desktop\DirectX_Textbook\d3d12book\Common\DDSTextureLoader.cpp">
+    <ClCompile Include="..\..\..\Downloads\DDSTextureLoader.cpp">
       <Filter>Common</Filter>
     </ClCompile>
   </ItemGroup>
@@ -65,16 +65,7 @@
     <ClInclude Include="Common\Camera.h">
       <Filter>Common</Filter>
     </ClInclude>
-    <ClInclude Include="Common\d3dApp.h">
-      <Filter>Common</Filter>
-    </ClInclude>
-    <ClInclude Include="Common\d3dUtil.h">
-      <Filter>Common</Filter>
-    </ClInclude>
     <ClInclude Include="Common\d3dx12.h">
-      <Filter>Common</Filter>
-    </ClInclude>
-    <ClInclude Include="Common\DDSTextureLoader.h">
       <Filter>Common</Filter>
     </ClInclude>
     <ClInclude Include="Common\GameTimer.h">
@@ -88,6 +79,15 @@
     </ClInclude>
     <ClInclude Include="Common\UploadBuffer.h">
       <Filter>Common</Filter>
+    </ClInclude>
+    <ClInclude Include="Common\d3dApp.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Common\d3dUtil.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Common\DDSTextureLoader.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

@@ -19,9 +19,9 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\Users\bduva\Desktop\DirectX_Textbook\d3d12book\Common\d3dApp.cpp" />
-    <ClCompile Include="..\..\Users\bduva\Desktop\DirectX_Textbook\d3d12book\Common\d3dUtil.cpp" />
-    <ClCompile Include="..\..\Users\bduva\Desktop\DirectX_Textbook\d3d12book\Common\DDSTextureLoader.cpp" />
+    <ClCompile Include="..\..\..\Downloads\d3dApp.cpp" />
+    <ClCompile Include="..\..\..\Downloads\d3dUtil.cpp" />
+    <ClCompile Include="..\..\..\Downloads\DDSTextureLoader.cpp" />
     <ClCompile Include="Common\Camera.cpp" />
     <ClCompile Include="Common\GameTimer.cpp" />
     <ClCompile Include="Common\GeometryGenerator.cpp" />
