@@ -66,6 +66,8 @@ void TowerGameApp::Update(const GameTimer& gt) {
     if (GetAsyncKeyState('S') & 0x8000) mCamera.Walk(-speed);
     if (GetAsyncKeyState('A') & 0x8000) mCamera.Strafe(-speed);
     if (GetAsyncKeyState('D') & 0x8000) mCamera.Strafe(speed);
+    if (GetAsyncKeyState('E') & 0x8000) mVerticalVelocity = 80.0f;  // Fly up
+    if (GetAsyncKeyState('Q') & 0x8000) mVerticalVelocity = -80.0f; // Fly down
 
     // 3. JUMPING & GRAVITY
     if ((GetAsyncKeyState(VK_SPACE) & 0x8000) && !mIsJumping) {
@@ -76,9 +78,9 @@ void TowerGameApp::Update(const GameTimer& gt) {
 
     // 4. PHYSICS & COLLISION
     XMFLOAT3 pos = mCamera.GetPosition3f();
-    float nextY = pos.y + (mVerticalVelocity * dt); // FIX: nextY declared here
+    float nextY = pos.y + (mVerticalVelocity * dt);
 
-    for (auto& ri : mAllRitems) {
+    for (auto& ri : mOpaqueRitems) {
         if (ri->ObjCBIndex < 2) continue; // Skip walls (0) and floor (1)
 
         // Calculate platform's current animated rotation (Automatic Movement Mark)
@@ -113,6 +115,21 @@ void TowerGameApp::Update(const GameTimer& gt) {
         mIsJumping = false;
     }
 
+    // WIN CONDITION: Check if player reached the orb
+    if (!mHasWon)
+    {
+        XMFLOAT3 orbPos = XMFLOAT3(0.0f, 1100.0f, 0.0f); // Match orb translation
+        float dx = pos.x - orbPos.x;
+        float dy = pos.y - orbPos.y;
+        float dz = pos.z - orbPos.z;
+        float distSq = dx * dx + dy * dy + dz * dz;
+
+        if (distSq < 50.0f * 50.0f) // Within 50 units of orb centre
+        {
+            mHasWon = true;
+            MessageBox(mhMainWnd, L"You reached the orb! YOU WIN!", L"VICTORY!", MB_OK);
+        }
+    }
     mCamera.SetPosition(pos.x, nextY, pos.z);
     mCamera.UpdateViewMatrix();
 
@@ -147,12 +164,12 @@ void TowerGameApp::Draw(const GameTimer& gt) {
 
     UINT objCBByteSize = (sizeof(ObjectConstants) + 255) & ~255;
 
-    for (auto& ri : mAllRitems) {
+    // --- PASS 1: Draw all opaque objects ---
+    for (auto& ri : mOpaqueRitems) {
         mCommandList->IASetVertexBuffers(0, 1, &ri->Geo->VertexBufferView());
         mCommandList->IASetIndexBuffer(&ri->Geo->IndexBufferView());
         mCommandList->IASetPrimitiveTopology(ri->PrimitiveType);
 
-        // Apply automatic rotation for Draw call
         XMMATRIX modelWorld = XMLoadFloat4x4(&ri->World);
         if (ri->ObjCBIndex >= 2) {
             float angle = 0.4f * gt.TotalTime() * (ri->ObjCBIndex % 2 == 0 ? 1 : -1);
@@ -161,13 +178,29 @@ void TowerGameApp::Draw(const GameTimer& gt) {
 
         ObjectConstants objCB;
         XMStoreFloat4x4(&objCB.World, XMMatrixTranspose(modelWorld));
-        // Platforms (indices >= 2) get material 1 (checkered), others get 0
         objCB.MaterialIndex = (ri->ObjCBIndex >= 2) ? 1 : 0;
         mCurrFrameResource->ObjectCB->CopyData(ri->ObjCBIndex, objCB);
 
         auto addr = mCurrFrameResource->ObjectCB->Resource()->GetGPUVirtualAddress() + (ri->ObjCBIndex * objCBByteSize);
         mCommandList->SetGraphicsRootConstantBufferView(1, addr);
+        mCommandList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
+    }
 
+    // --- PASS 2: Draw transparent orb last, with blending PSO ---
+    mCommandList->SetPipelineState(mTransparentPSO.Get());
+    {
+        auto& ri = mOrbRitem;
+        mCommandList->IASetVertexBuffers(0, 1, &ri->Geo->VertexBufferView());
+        mCommandList->IASetIndexBuffer(&ri->Geo->IndexBufferView());
+        mCommandList->IASetPrimitiveTopology(ri->PrimitiveType);
+
+        ObjectConstants objCB;
+        XMStoreFloat4x4(&objCB.World, XMMatrixTranspose(XMLoadFloat4x4(&ri->World)));
+        objCB.MaterialIndex = 2; // Orb material — handled in shader
+        mCurrFrameResource->ObjectCB->CopyData(ri->ObjCBIndex, objCB);
+
+        auto addr = mCurrFrameResource->ObjectCB->Resource()->GetGPUVirtualAddress() + (ri->ObjCBIndex * objCBByteSize);
+        mCommandList->SetGraphicsRootConstantBufferView(1, addr);
         mCommandList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
     }
 
@@ -188,6 +221,8 @@ void TowerGameApp::BuildTowerGeometry() {
     GeometryGenerator::MeshData box = geoGen.CreateBox(12.0f, 1.0f, 12.0f, 3);
     GeometryGenerator::MeshData cylinder = geoGen.CreateCylinder(150.0f, 150.0f, 1000.0f, 60, 60);
     GeometryGenerator::MeshData grid = geoGen.CreateGrid(400.0f, 400.0f, 20, 20);
+    // NEW: Sphere for the goal orb at the top of the tower
+    GeometryGenerator::MeshData sphere = geoGen.CreateSphere(20.0f, 32, 32);
 
     std::vector<Vertex> vertices;
     std::vector<std::uint32_t> indices;
@@ -203,8 +238,11 @@ void TowerGameApp::BuildTowerGeometry() {
         for (auto& i : data.Indices32) indices.push_back(i);
         };
 
-    SubmeshGeometry boxSub, cylSub, gridSub;
-    addMesh(box, boxSub); addMesh(cylinder, cylSub); addMesh(grid, gridSub);
+    SubmeshGeometry boxSub, cylSub, gridSub, sphereSub;
+    addMesh(box, boxSub);
+    addMesh(cylinder, cylSub);
+    addMesh(grid, gridSub);
+    addMesh(sphere, sphereSub); // NEW
 
     auto geo = std::make_unique<MeshGeometry>();
     geo->Name = "towerGeo";
@@ -214,7 +252,10 @@ void TowerGameApp::BuildTowerGeometry() {
     geo->VertexBufferByteSize = (UINT)vertices.size() * sizeof(Vertex);
     geo->IndexFormat = DXGI_FORMAT_R32_UINT;
     geo->IndexBufferByteSize = (UINT)indices.size() * sizeof(uint32_t);
-    geo->DrawArgs["box"] = boxSub; geo->DrawArgs["cylinder"] = cylSub; geo->DrawArgs["grid"] = gridSub;
+    geo->DrawArgs["box"] = boxSub;
+    geo->DrawArgs["cylinder"] = cylSub;
+    geo->DrawArgs["grid"] = gridSub;
+    geo->DrawArgs["sphere"] = sphereSub; // NEW
     mGeometries[geo->Name] = std::move(geo);
 
     // 1. Tower Walls
@@ -222,6 +263,7 @@ void TowerGameApp::BuildTowerGeometry() {
     XMStoreFloat4x4(&walls->World, XMMatrixTranslation(0, 450, 0));
     walls->ObjCBIndex = 0; walls->Geo = mGeometries["towerGeo"].get();
     walls->IndexCount = cylSub.IndexCount; walls->StartIndexLocation = cylSub.StartIndexLocation; walls->BaseVertexLocation = cylSub.BaseVertexLocation;
+    mOpaqueRitems.push_back(walls.get());
     mAllRitems.push_back(std::move(walls));
 
     // 2. Floor
@@ -229,6 +271,7 @@ void TowerGameApp::BuildTowerGeometry() {
     XMStoreFloat4x4(&ground->World, XMMatrixTranslation(0, 0, 0));
     ground->ObjCBIndex = 1; ground->Geo = mGeometries["towerGeo"].get();
     ground->IndexCount = gridSub.IndexCount; ground->StartIndexLocation = gridSub.StartIndexLocation; ground->BaseVertexLocation = gridSub.BaseVertexLocation;
+    mOpaqueRitems.push_back(ground.get());
     mAllRitems.push_back(std::move(ground));
 
     // 3. Platforms
@@ -240,8 +283,17 @@ void TowerGameApp::BuildTowerGeometry() {
         XMStoreFloat4x4(&ri->World, XMMatrixTranslation(r * cos(theta), y, r * sin(theta)));
         ri->ObjCBIndex = i + 2; ri->Geo = mGeometries["towerGeo"].get();
         ri->IndexCount = boxSub.IndexCount; ri->StartIndexLocation = boxSub.StartIndexLocation; ri->BaseVertexLocation = boxSub.BaseVertexLocation;
+        mOpaqueRitems.push_back(ri.get());
         mAllRitems.push_back(std::move(ri));
     }
+
+    // 4. NEW: Goal Orb — transparent sphere at the top of the tower (ObjCBIndex = 92)
+    auto orb = std::make_unique<RenderItem>();
+    XMStoreFloat4x4(&orb->World, XMMatrixTranslation(0.0f, 1100.0f, 0.0f));
+    orb->ObjCBIndex = 92; orb->Geo = mGeometries["towerGeo"].get();
+    orb->IndexCount = sphereSub.IndexCount; orb->StartIndexLocation = sphereSub.StartIndexLocation; orb->BaseVertexLocation = sphereSub.BaseVertexLocation;
+    mOrbRitem = orb.get(); // Keep raw pointer for Draw()
+    mAllRitems.push_back(std::move(orb));
 }
 
 void TowerGameApp::BuildRootSignature() {
@@ -258,13 +310,14 @@ void TowerGameApp::BuildShadersAndInputLayout() {
     mvsByteCode = d3dUtil::CompileShader(L"shaders\\Default.hlsl", nullptr, "VS", "vs_5_0");
     mpsByteCode = d3dUtil::CompileShader(L"shaders\\Default.hlsl", nullptr, "PS", "ps_5_0");
     mInputLayout = {
-        { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
     };
 }
 
 void TowerGameApp::BuildPSOs() {
+    // --- Base PSO descriptor (shared settings) ---
     D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc;
     ZeroMemory(&psoDesc, sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC));
     psoDesc.InputLayout = { mInputLayout.data(), (UINT)mInputLayout.size() };
@@ -272,7 +325,7 @@ void TowerGameApp::BuildPSOs() {
     psoDesc.VS = { reinterpret_cast<BYTE*>(mvsByteCode->GetBufferPointer()), mvsByteCode->GetBufferSize() };
     psoDesc.PS = { reinterpret_cast<BYTE*>(mpsByteCode->GetBufferPointer()), mpsByteCode->GetBufferSize() };
     psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-    psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE; // Allow seeing interior walls
+    psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
     psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
     psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
     psoDesc.SampleMask = UINT_MAX;
@@ -282,7 +335,32 @@ void TowerGameApp::BuildPSOs() {
     psoDesc.SampleDesc.Count = m4xMsaaState ? 4 : 1;
     psoDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
     psoDesc.DSVFormat = mDepthStencilFormat;
+
+    // Opaque PSO (unchanged)
     ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&mOpaquePSO)));
+
+    // --- NEW: Transparent PSO — copy opaque desc, then enable alpha blending ---
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC transparentDesc = psoDesc;
+
+    D3D12_RENDER_TARGET_BLEND_DESC blendDesc;
+    blendDesc.BlendEnable = TRUE;
+    blendDesc.LogicOpEnable = FALSE;
+    blendDesc.SrcBlend = D3D12_BLEND_SRC_ALPHA;       // Multiply source by its alpha
+    blendDesc.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;   // Multiply dest by (1 - alpha)
+    blendDesc.BlendOp = D3D12_BLEND_OP_ADD;
+    blendDesc.SrcBlendAlpha = D3D12_BLEND_ONE;
+    blendDesc.DestBlendAlpha = D3D12_BLEND_ZERO;
+    blendDesc.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+    blendDesc.LogicOp = D3D12_LOGIC_OP_NOOP;
+    blendDesc.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+    transparentDesc.BlendState.RenderTarget[0] = blendDesc;
+
+    // Keep depth testing ON so orb is occluded by geometry in front of it,
+    // but disable depth writes so it doesn't block objects behind it
+    transparentDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+
+    ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&transparentDesc, IID_PPV_ARGS(&mTransparentPSO)));
 }
 
 void TowerGameApp::BuildFrameResources() {
