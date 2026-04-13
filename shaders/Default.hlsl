@@ -5,7 +5,6 @@ cbuffer cbPass : register(b0)
     float3 gEyePosW;
     float gTotalTime;
 };
-
 cbuffer cbObject : register(b1)
 {
     float4x4 gWorld;
@@ -13,14 +12,12 @@ cbuffer cbObject : register(b1)
     uint gMaterialIndex;
     float3 gObjPad;
 };
-
 struct VertexIn
 {
     float3 PosL : POSITION;
     float3 NormalL : NORMAL;
     float2 TexC : TEXCOORD;
 };
-
 struct VertexOut
 {
     float4 PosH : SV_POSITION;
@@ -42,36 +39,55 @@ VertexOut VS(VertexIn vin)
 
 float4 PS(VertexOut pin) : SV_Target
 {
+    // NEW: Goal orb — pulsing transparent emissive sphere (MaterialIndex 2)
+    if (gMaterialIndex == 2)
+{
+    // Very obvious pulse — swings from almost invisible to fully opaque
+    float pulse = sin(gTotalTime * 5.0f) * 0.4f + 0.6f;
+
+    // Bright obvious rim — make the whole sphere shift color dramatically
+    float3 N = normalize(pin.NormalW);
+    float3 V = normalize(gEyePosW - pin.PosW);
+    float rim = 1.0f - saturate(dot(N, V));
+
+    // Swing between bright red and bright blue so the color change is unmissable
+    float3 colorA = float3(1.0f, 0.1f, 0.1f); // red
+    float3 colorB = float3(0.1f, 0.5f, 1.0f); // blue
+    float3 orbColor = lerp(colorA, colorB, rim) * 3.0f;
+
+    return float4(orbColor, pulse);
+}
+
     float3 N = normalize(pin.NormalW);
     float3 V = normalize(gEyePosW - pin.PosW);
 
-    // 1. AMBIENT LIGHT (Fixes the "pitch black" problem)
+    // 1. AMBIENT LIGHT
     float3 ambient = float3(0.2f, 0.2f, 0.3f);
 
-    // 2. DIRECTIONAL LIGHT (The Sun - shines down into the tower)
-    float3 sunDir = normalize(float3(0.577f, 0.577f, 0.577f));
-    float sunDiff = max(dot(N, sunDir), 0.0f);
+    // 2. DIRECTIONAL LIGHT (sun shining down into the tower)
+    float3 sunDir  = normalize(float3(0.577f, 0.577f, 0.577f));
+    float  sunDiff = max(dot(N, sunDir), 0.0f);
     float3 sunColor = sunDiff * float3(0.6f, 0.6f, 0.5f);
 
-    // 3. PLAYER POINT LIGHT (The Flashlight)
+    // 3. PLAYER POINT LIGHT (flashlight attached to camera)
     float3 lightVec = gEyePosW - pin.PosW;
-    float d = length(lightVec);
-    float atten = 1.0f / (1.0f + 0.1f * d + 0.01f * d * d);
-    float diff = max(dot(N, normalize(lightVec)), 0.0f);
+    float  d        = length(lightVec);
+    float  atten    = 1.0f / (1.0f + 0.1f * d + 0.01f * d * d);
+    float  diff     = max(dot(N, normalize(lightVec)), 0.0f);
     float3 pointColor = diff * atten * float3(1.0f, 0.9f, 0.7f);
 
-    // Final color logic
-    float3 baseColor = float3(0.5f, 0.5f, 0.5f); // Grey stone
+    // Base colour
+    float3 baseColor = float3(0.5f, 0.5f, 0.5f);
 
-    // Add procedural checkerboard texture for the platforms
+    // Procedural checkerboard for platforms (MaterialIndex 1)
     if (gMaterialIndex == 1)
     {
-        float2 uv = pin.TexC * 5.0f; // Scale texture coordinates
+        float2 uv     = pin.TexC * 5.0f;
         float checker = fmod(abs(floor(uv.x) + floor(uv.y)), 2.0f);
-        baseColor = lerp(float3(0.1f, 0.1f, 0.1f), float3(0.9f, 0.7f, 0.1f), checker); // Yellow and dark grey checker pattern
+        baseColor     = lerp(float3(0.1f, 0.1f, 0.1f), float3(0.9f, 0.7f, 0.1f), checker);
     }
 
-    // Make the floor (grid) a different color (Dark Blue Carpet)
+    // Dark blue carpet for the floor
     if (pin.PosW.y < 0.1f && gMaterialIndex == 0)
         baseColor = float3(0.2f, 0.2f, 0.4f);
 
