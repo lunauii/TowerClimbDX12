@@ -139,6 +139,23 @@ void TowerGameApp::Update(const GameTimer& gt) {
     XMStoreFloat4x4(&passCB.ViewProj, XMMatrixTranspose(viewProj));
     passCB.EyePosW = mCamera.GetPosition3f();
     passCB.TotalTime = gt.TotalTime();
+
+    float lightHeights[3] = { 50.0f, 550.0f, 1050.0f };
+    int lightIndex = 0;
+
+    for (int ring = 0; ring < 3; ++ring) {
+        for (int i = 0; i < 8; ++i) {
+            float angle = i * (MathHelper::Pi / 4.0f);
+
+            passCB.Lights[lightIndex].Position = { 145.0f * cos(angle), lightHeights[ring], 145.0f * sin(angle) };
+            passCB.Lights[lightIndex].Strength = { 0.8f, 0.8f, 0.2f };
+            passCB.Lights[lightIndex].FalloffStart = 20.0f;
+            passCB.Lights[lightIndex].FalloffEnd = 120.0f;
+
+            lightIndex++;
+        }
+    }
+
     mCurrFrameResource->PassCB->CopyData(0, passCB);
 }
 
@@ -171,14 +188,19 @@ void TowerGameApp::Draw(const GameTimer& gt) {
         mCommandList->IASetPrimitiveTopology(ri->PrimitiveType);
 
         XMMATRIX modelWorld = XMLoadFloat4x4(&ri->World);
-        if (ri->ObjCBIndex >= 2) {
+        if (ri->ObjCBIndex >= 2 && ri->ObjCBIndex <= 91) {
             float angle = 0.4f * gt.TotalTime() * (ri->ObjCBIndex % 2 == 0 ? 1 : -1);
             modelWorld = modelWorld * XMMatrixRotationY(angle);
         }
 
         ObjectConstants objCB;
         XMStoreFloat4x4(&objCB.World, XMMatrixTranspose(modelWorld));
-        objCB.MaterialIndex = (ri->ObjCBIndex >= 2) ? 1 : 0;
+        
+        // 0=Wall/Floor, 1=Platforms, 3=Wall Lights
+        if (ri->ObjCBIndex >= 93) objCB.MaterialIndex = 3;
+        else if (ri->ObjCBIndex >= 2) objCB.MaterialIndex = 1;
+        else objCB.MaterialIndex = 0;
+
         mCurrFrameResource->ObjectCB->CopyData(ri->ObjCBIndex, objCB);
 
         auto addr = mCurrFrameResource->ObjectCB->Resource()->GetGPUVirtualAddress() + (ri->ObjCBIndex * objCBByteSize);
@@ -223,6 +245,7 @@ void TowerGameApp::BuildTowerGeometry() {
     GeometryGenerator::MeshData grid = geoGen.CreateGrid(400.0f, 400.0f, 20, 20);
     // NEW: Sphere for the goal orb at the top of the tower
     GeometryGenerator::MeshData sphere = geoGen.CreateSphere(20.0f, 32, 32);
+    GeometryGenerator::MeshData lightBox = geoGen.CreateBox(4.0f, 4.0f, 1.0f, 0);
 
     std::vector<Vertex> vertices;
     std::vector<std::uint32_t> indices;
@@ -238,11 +261,12 @@ void TowerGameApp::BuildTowerGeometry() {
         for (auto& i : data.Indices32) indices.push_back(i);
         };
 
-    SubmeshGeometry boxSub, cylSub, gridSub, sphereSub;
+    SubmeshGeometry boxSub, cylSub, gridSub, sphereSub, lightBoxSub;
     addMesh(box, boxSub);
     addMesh(cylinder, cylSub);
     addMesh(grid, gridSub);
-    addMesh(sphere, sphereSub); // NEW
+    addMesh(sphere, sphereSub);
+    addMesh(lightBox, lightBoxSub);
 
     auto geo = std::make_unique<MeshGeometry>();
     geo->Name = "towerGeo";
@@ -255,7 +279,8 @@ void TowerGameApp::BuildTowerGeometry() {
     geo->DrawArgs["box"] = boxSub;
     geo->DrawArgs["cylinder"] = cylSub;
     geo->DrawArgs["grid"] = gridSub;
-    geo->DrawArgs["sphere"] = sphereSub; // NEW
+    geo->DrawArgs["sphere"] = sphereSub;
+    geo->DrawArgs["lightBox"] = lightBoxSub;
     mGeometries[geo->Name] = std::move(geo);
 
     // 1. Tower Walls
@@ -287,13 +312,39 @@ void TowerGameApp::BuildTowerGeometry() {
         mAllRitems.push_back(std::move(ri));
     }
 
-    // 4. NEW: Goal Orb — transparent sphere at the top of the tower (ObjCBIndex = 92)
+    // 4. Goal Orb — transparent sphere at the top of the tower (ObjCBIndex = 92)
     auto orb = std::make_unique<RenderItem>();
     XMStoreFloat4x4(&orb->World, XMMatrixTranslation(0.0f, 1100.0f, 0.0f));
     orb->ObjCBIndex = 92; orb->Geo = mGeometries["towerGeo"].get();
     orb->IndexCount = sphereSub.IndexCount; orb->StartIndexLocation = sphereSub.StartIndexLocation; orb->BaseVertexLocation = sphereSub.BaseVertexLocation;
     mOrbRitem = orb.get(); // Keep raw pointer for Draw()
     mAllRitems.push_back(std::move(orb));
+
+    // 5. Wall Light Fixtures (ObjCBIndex 93 through 116)
+    float lightHeights[3] = { 50.0f, 550.0f, 1050.0f }; // Floor, Midpoint, Ceiling
+    int lightIndex = 0;
+
+    for (int ring = 0; ring < 3; ++ring) {
+        for (int i = 0; i < 8; ++i) {
+            auto ri = std::make_unique<RenderItem>();
+            float angle = i * (MathHelper::Pi / 4.0f);
+            float r = 148.0f;
+            float y = lightHeights[ring];
+
+            XMMATRIX world = XMMatrixRotationY(-angle) * XMMatrixTranslation(r * cos(angle), y, r * sin(angle));
+            XMStoreFloat4x4(&ri->World, world);
+
+            ri->ObjCBIndex = 93 + lightIndex;
+            ri->Geo = mGeometries["towerGeo"].get();
+            ri->IndexCount = lightBoxSub.IndexCount;
+            ri->StartIndexLocation = lightBoxSub.StartIndexLocation;
+            ri->BaseVertexLocation = lightBoxSub.BaseVertexLocation;
+            mOpaqueRitems.push_back(ri.get());
+            mAllRitems.push_back(std::move(ri));
+
+            lightIndex++; // Increment so each box gets a unique ObjCBIndex
+        }
+    }
 }
 
 void TowerGameApp::BuildRootSignature() {

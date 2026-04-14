@@ -3,6 +3,8 @@
 #include "Common/MathHelper.h"
 #include "Common/UploadBuffer.h"
 
+#define MAX_LIGHTS 24
+
 struct ObjectConstants {
     DirectX::XMFLOAT4X4 World = MathHelper::Identity4x4();
     DirectX::XMFLOAT4X4 TexTransform = MathHelper::Identity4x4();
@@ -18,7 +20,7 @@ struct PassConstants {
     float cbPerObjectPad1 = 0.0f;
     DirectX::XMFLOAT4 AmbientLight = { 0.0f, 0.0f, 0.0f, 1.0f };
     // Marks: Lighting - Add a Point Light here
-    DirectX::XMFLOAT3 PointLightPos = { 0.0f, 50.0f, 0.0f };
+    Light Lights[MAX_LIGHTS];
     float TotalTime = 0.0f;
 };
 
