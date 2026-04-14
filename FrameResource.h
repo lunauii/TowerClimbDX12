@@ -3,7 +3,7 @@
 #include "Common/MathHelper.h"
 #include "Common/UploadBuffer.h"
 
-#define MAX_LIGHTS 24
+#define MAX_LIGHTS 48
 
 struct ObjectConstants {
     DirectX::XMFLOAT4X4 World = MathHelper::Identity4x4();

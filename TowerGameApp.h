@@ -58,7 +58,9 @@ private:
     ComPtr<ID3DBlob> mgsByteCode = nullptr;            
     ComPtr<ID3D12PipelineState> mSparkPSO = nullptr;   
     ComPtr<ID3D12PipelineState> mTorchPSO = nullptr;
-    ComPtr<ID3DBlob> mTorchGsByteCode = nullptr;
+    ComPtr<ID3DBlob> mgsTorchByteCode = nullptr;
+    ComPtr<ID3DBlob> mvsTorchByteCode = nullptr;
+    ComPtr<ID3DBlob> mpsTorchByteCode = nullptr;
     std::vector<D3D12_INPUT_ELEMENT_DESC> mInputLayout;
     std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> mGeometries;
     std::vector<std::unique_ptr<RenderItem>> mAllRitems;

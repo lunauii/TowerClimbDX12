@@ -171,10 +171,10 @@ void TowerGameApp::Update(const GameTimer& gt) {
     passCB.EyePosW = mCamera.GetPosition3f();
     passCB.TotalTime = gt.TotalTime();
 
-    float lightHeights[3] = { 50.0f, 550.0f, 1050.0f };
+    float lightHeights[6] = { 50.0f, 250.0f, 450.0f, 650.0f, 850.0f, 1050.0f };
     int lightIndex = 0;
 
-    for (int ring = 0; ring < 3; ++ring) {
+    for (int ring = 0; ring < 6; ++ring) {
         for (int i = 0; i < 8; ++i) {
             float angle = i * (MathHelper::Pi / 4.0f);
 
@@ -311,7 +311,7 @@ void TowerGameApp::Draw(const GameTimer& gt) {
 void TowerGameApp::BuildTowerGeometry() {
     GeometryGenerator geoGen;
     GeometryGenerator::MeshData box = geoGen.CreateBox(12.0f, 1.0f, 12.0f, 3);
-    GeometryGenerator::MeshData cylinder = geoGen.CreateCylinder(150.0f, 150.0f, 1000.0f, 60, 60);
+    GeometryGenerator::MeshData cylinder = geoGen.CreateCylinder(150.0f, 150.0f, 1500.0f, 60, 60);
     GeometryGenerator::MeshData grid = geoGen.CreateGrid(400.0f, 400.0f, 20, 20);
     // NEW: Sphere for the goal orb at the top of the tower
     GeometryGenerator::MeshData sphere = geoGen.CreateSphere(20.0f, 32, 32);
@@ -394,18 +394,21 @@ void TowerGameApp::BuildTowerGeometry() {
     std::vector<Vertex> torchVertices;
     std::vector<std::uint32_t> torchIndices;
 
-    int torchCount = 0;
-    float torchHeights[] = { 60.0f, 200.0f, 350.0f, 500.0f, 650.0f, 800.0f, 950.0f };
+    float lightHeights[6] = { 50.0f, 250.0f, 450.0f, 650.0f, 850.0f, 1050.0f }; // Match the box heights
     int torchesPerRing = 8;
+    int torchCount = 0;
 
-    for (float h : torchHeights) {
+    for (float h : lightHeights) {
         for (int i = 0; i < torchesPerRing; ++i) {
             float angle = i * (2.0f * MathHelper::Pi / torchesPerRing);
-            float r = 140.0f; // Just inside the wall (wall radius = 150)
+
+            // Use 146.0f radius to sit flush against the box (which is at 148.0f)
+            float r = 146.0f;
 
             Vertex v;
-            v.Pos = { r * cosf(angle), h, r * sinf(angle) };
-            v.Normal = { -cosf(angle), 0.0f, -sinf(angle) }; // Points inward
+            // Add +2.0f to 'h' so the flame base sits on top of the 4-unit tall box
+            v.Pos = { r * cosf(angle), h + 2.0f, r * sinf(angle) };
+            v.Normal = { -cosf(angle), 0.0f, -sinf(angle) };
             v.TexC = { 0.0f, 0.0f };
             torchVertices.push_back(v);
             torchIndices.push_back(torchCount++);
@@ -555,10 +558,10 @@ void TowerGameApp::BuildRenderItems() {
     mAllRitems.push_back(std::move(orb));
 
     // 5. Wall Light Fixtures (ObjCBIndex 93 through 116)
-    float lightHeights[3] = { 50.0f, 550.0f, 1050.0f }; // Floor, Midpoint, Ceiling
+    float lightHeights[6] = { 50.0f, 250.0f, 450.0f, 650.0f, 850.0f, 1050.0f }; // Floor, Midpoint, Ceiling
     int lightIndex = 0;
 
-    for (int ring = 0; ring < 3; ++ring) {
+    for (int ring = 0; ring < 6; ++ring) {
         for (int i = 0; i < 8; ++i) {
             auto ri = std::make_unique<RenderItem>();
             float angle = i * (MathHelper::Pi / 4.0f);
@@ -635,7 +638,9 @@ void TowerGameApp::BuildShadersAndInputLayout() {
     mvsByteCode = d3dUtil::CompileShader(L"shaders\\Default.hlsl", nullptr, "VS", "vs_5_0");
     mpsByteCode = d3dUtil::CompileShader(L"shaders\\Default.hlsl", nullptr, "PS", "ps_5_0");
     mgsByteCode = d3dUtil::CompileShader(L"shaders\\Default.hlsl", nullptr, "GS", "gs_5_0");
-    mTorchGsByteCode = d3dUtil::CompileShader(L"shaders\\Default.hlsl", nullptr, "GS_Torch", "gs_5_0");
+    mgsTorchByteCode = d3dUtil::CompileShader(L"shaders\\Default.hlsl", nullptr, "GS_Torch", "gs_5_0");
+    mvsTorchByteCode = d3dUtil::CompileShader(L"shaders\\Default.hlsl", nullptr, "VS_Torch", "vs_5_0");
+    mpsTorchByteCode = d3dUtil::CompileShader(L"shaders\\Default.hlsl", nullptr, "PS_Torch", "ps_5_0");
 
     mInputLayout = {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
@@ -698,10 +703,9 @@ void TowerGameApp::BuildPSOs() {
 
     // --- Torch Billboard PSO ---
     D3D12_GRAPHICS_PIPELINE_STATE_DESC torchDesc = transparentDesc;
-    torchDesc.GS = {
-        reinterpret_cast<BYTE*>(mTorchGsByteCode->GetBufferPointer()),
-        mTorchGsByteCode->GetBufferSize()
-    };
+    torchDesc.VS = { reinterpret_cast<BYTE*>(mvsTorchByteCode->GetBufferPointer()), mvsTorchByteCode->GetBufferSize() };
+    torchDesc.GS = { reinterpret_cast<BYTE*>(mgsTorchByteCode->GetBufferPointer()), mgsTorchByteCode->GetBufferSize() };
+    torchDesc.PS = { reinterpret_cast<BYTE*>(mpsTorchByteCode->GetBufferPointer()), mpsTorchByteCode->GetBufferSize() };
     torchDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT;
     ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&torchDesc, IID_PPV_ARGS(&mTorchPSO)));
 }
