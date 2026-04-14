@@ -275,6 +275,27 @@ void TowerGameApp::Draw(const GameTimer& gt) {
         mCommandList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
     }
 
+    // --- PASS 4: Draw Torch Billboards ---
+    mCommandList->SetPipelineState(mTorchPSO.Get());
+    for (auto& ri : mTorchRitems) {
+        mCommandList->IASetVertexBuffers(0, 1, &ri->Geo->VertexBufferView());
+        mCommandList->IASetIndexBuffer(&ri->Geo->IndexBufferView());
+        mCommandList->IASetPrimitiveTopology(ri->PrimitiveType);
+
+        ObjectConstants objCB;
+        XMStoreFloat4x4(&objCB.World, XMMatrixTranspose(XMLoadFloat4x4(&ri->World)));
+        objCB.MaterialIndex = 4; // New torch material index
+        mCurrFrameResource->ObjectCB->CopyData(ri->ObjCBIndex, objCB);
+
+        auto addr = mCurrFrameResource->ObjectCB->Resource()->GetGPUVirtualAddress()
+            + (ri->ObjCBIndex * objCBByteSize);
+        mCommandList->SetGraphicsRootConstantBufferView(1, addr);
+        mCommandList->DrawIndexedInstanced(
+            ri->IndexCount, 1,
+            ri->StartIndexLocation,
+            ri->BaseVertexLocation, 0);
+    }
+
     auto b2 = CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
     mCommandList->ResourceBarrier(1, &b2);
 
@@ -368,6 +389,51 @@ void TowerGameApp::BuildTowerGeometry() {
     sparkGeo->DrawArgs["sparks"] = sparkSub;
 
     mGeometries[sparkGeo->Name] = std::move(sparkGeo);
+
+    // Place torches in rings around the tower interior wall
+    std::vector<Vertex> torchVertices;
+    std::vector<std::uint32_t> torchIndices;
+
+    int torchCount = 0;
+    float torchHeights[] = { 60.0f, 200.0f, 350.0f, 500.0f, 650.0f, 800.0f, 950.0f };
+    int torchesPerRing = 8;
+
+    for (float h : torchHeights) {
+        for (int i = 0; i < torchesPerRing; ++i) {
+            float angle = i * (2.0f * MathHelper::Pi / torchesPerRing);
+            float r = 140.0f; // Just inside the wall (wall radius = 150)
+
+            Vertex v;
+            v.Pos = { r * cosf(angle), h, r * sinf(angle) };
+            v.Normal = { -cosf(angle), 0.0f, -sinf(angle) }; // Points inward
+            v.TexC = { 0.0f, 0.0f };
+            torchVertices.push_back(v);
+            torchIndices.push_back(torchCount++);
+        }
+    }
+
+    auto torchGeo = std::make_unique<MeshGeometry>();
+    torchGeo->Name = "torchGeo";
+    torchGeo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(
+        md3dDevice.Get(), mCommandList.Get(),
+        torchVertices.data(), (UINT)torchVertices.size() * sizeof(Vertex),
+        torchGeo->VertexBufferUploader);
+    torchGeo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(
+        md3dDevice.Get(), mCommandList.Get(),
+        torchIndices.data(), (UINT)torchIndices.size() * sizeof(uint32_t),
+        torchGeo->IndexBufferUploader);
+    torchGeo->VertexByteStride = sizeof(Vertex);
+    torchGeo->VertexBufferByteSize = (UINT)torchVertices.size() * sizeof(Vertex);
+    torchGeo->IndexFormat = DXGI_FORMAT_R32_UINT;
+    torchGeo->IndexBufferByteSize = (UINT)torchIndices.size() * sizeof(uint32_t);
+
+    SubmeshGeometry torchSub;
+    torchSub.IndexCount = (UINT)torchIndices.size();
+    torchSub.StartIndexLocation = 0;
+    torchSub.BaseVertexLocation = 0;
+    torchGeo->DrawArgs["torches"] = torchSub;
+
+    mGeometries[torchGeo->Name] = std::move(torchGeo);
 
 }
 
@@ -541,6 +607,18 @@ void TowerGameApp::BuildRenderItems() {
     car->BaseVertexLocation = car->Geo->DrawArgs["car"].BaseVertexLocation;
     mOpaqueRitems.push_back(car.get());
     mAllRitems.push_back(std::move(car));
+
+    // 7b. Torch Billboards (ObjCBIndex 119)
+    auto torches = std::make_unique<RenderItem>();
+    XMStoreFloat4x4(&torches->World, XMMatrixIdentity());
+    torches->ObjCBIndex = 119;
+    torches->Geo = mGeometries["torchGeo"].get();
+    torches->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_POINTLIST;
+    torches->IndexCount = torches->Geo->DrawArgs["torches"].IndexCount;
+    torches->StartIndexLocation = torches->Geo->DrawArgs["torches"].StartIndexLocation;
+    torches->BaseVertexLocation = torches->Geo->DrawArgs["torches"].BaseVertexLocation;
+    mTorchRitems.push_back(torches.get());
+    mAllRitems.push_back(std::move(torches));
 }
 
 void TowerGameApp::BuildRootSignature() {
@@ -557,6 +635,8 @@ void TowerGameApp::BuildShadersAndInputLayout() {
     mvsByteCode = d3dUtil::CompileShader(L"shaders\\Default.hlsl", nullptr, "VS", "vs_5_0");
     mpsByteCode = d3dUtil::CompileShader(L"shaders\\Default.hlsl", nullptr, "PS", "ps_5_0");
     mgsByteCode = d3dUtil::CompileShader(L"shaders\\Default.hlsl", nullptr, "GS", "gs_5_0");
+    mTorchGsByteCode = d3dUtil::CompileShader(L"shaders\\Default.hlsl", nullptr, "GS_Torch", "gs_5_0");
+
     mInputLayout = {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
@@ -615,10 +695,19 @@ void TowerGameApp::BuildPSOs() {
 
     ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&transparentDesc, IID_PPV_ARGS(&mTransparentPSO)));
     ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&sparkDesc, IID_PPV_ARGS(&mSparkPSO)));
+
+    // --- Torch Billboard PSO ---
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC torchDesc = transparentDesc;
+    torchDesc.GS = {
+        reinterpret_cast<BYTE*>(mTorchGsByteCode->GetBufferPointer()),
+        mTorchGsByteCode->GetBufferSize()
+    };
+    torchDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT;
+    ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&torchDesc, IID_PPV_ARGS(&mTorchPSO)));
 }
 
 void TowerGameApp::BuildFrameResources() {
-    for (int i = 0; i < 3; ++i) mFrameResources.push_back(std::make_unique<FrameResource>(md3dDevice.Get(), 1, 200));
+    for (int i = 0; i < 3; ++i) mFrameResources.push_back(std::make_unique<FrameResource>(md3dDevice.Get(), 1, 250));
 }
 
 void TowerGameApp::OnMouseDown(WPARAM btnState, int x, int y) { mLastMousePos.x = x; mLastMousePos.y = y; SetCapture(mhMainWnd); }
