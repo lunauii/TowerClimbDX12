@@ -45,14 +45,14 @@
     <ClCompile Include="Common\MathHelper.cpp">
       <Filter>Common</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\..\Downloads\d3dApp.cpp">
-      <Filter>Common</Filter>
+    <ClCompile Include="$(SolutionDir)Common\d3dApp.cpp">
+      <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\..\Downloads\d3dUtil.cpp">
-      <Filter>Common</Filter>
+    <ClCompile Include="$(SolutionDir)Common\d3dUtil.cpp">
+      <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\..\Downloads\DDSTextureLoader.cpp">
-      <Filter>Common</Filter>
+    <ClCompile Include="$(SolutionDir)Common\DDSTextureLoader.cpp">
+      <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

@@ -144,3 +144,44 @@ float4 PS(VertexOut pin) : SV_Target
 
     return float4(baseColor * finalLight, 1.0f);
 }
+
+// =================================================================
+// GEOMETRY SHADER: Point to Quad (Billboarding)
+// =================================================================
+[maxvertexcount(4)]
+void GS(point VertexOut gin[1], inout TriangleStream<VertexOut> triStream)
+{
+    // 1. Get the world position of our single point
+    float3 centerPos = gin[0].PosW;
+
+    // 2. Calculate axes so the quad always faces the camera
+    float3 look  = normalize(gEyePosW - centerPos);
+    float3 up    = float3(0.0f, 1.0f, 0.0f);
+    float3 right = normalize(cross(up, look));
+    up           = cross(look, right);
+
+    // 3. Define the 4 corners of our new shape (2 units wide/high)
+    float halfWidth = 1.0f;
+    float halfHeight = 1.0f;
+    
+    float4 v[4];
+    v[0] = float4(centerPos - halfWidth * right - halfHeight * up, 1.0f); // Bottom Left
+    v[1] = float4(centerPos - halfWidth * right + halfHeight * up, 1.0f); // Top Left
+    v[2] = float4(centerPos + halfWidth * right - halfHeight * up, 1.0f); // Bottom Right
+    v[3] = float4(centerPos + halfWidth * right + halfHeight * up, 1.0f); // Top Right
+
+    float2 uvs[4] = { float2(0.0f, 1.0f), float2(0.0f, 0.0f), float2(1.0f, 1.0f), float2(1.0f, 0.0f) };
+
+    // 4. Output the new vertices to the Pixel Shader
+    VertexOut gout;
+    [unroll]
+    for(int i = 0; i < 4; ++i)
+    {
+        gout.PosW    = v[i].xyz;
+        gout.PosH    = mul(v[i], gViewProj); // Project to screen
+        gout.NormalW = look;                 // Normal faces camera
+        gout.TexC    = uvs[i];
+        
+        triStream.Append(gout);
+    }
+}

@@ -226,6 +226,24 @@ void TowerGameApp::Draw(const GameTimer& gt) {
         mCommandList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
     }
 
+    // --- PASS 3: Draw Geometry Shader Sparks ---
+    mCommandList->SetPipelineState(mSparkPSO.Get());
+    for (auto& ri : mSparkRitems) {
+        mCommandList->IASetVertexBuffers(0, 1, &ri->Geo->VertexBufferView());
+        mCommandList->IASetIndexBuffer(&ri->Geo->IndexBufferView());
+        mCommandList->IASetPrimitiveTopology(ri->PrimitiveType); // Will set D3D_PRIMITIVE_TOPOLOGY_POINTLIST
+
+        ObjectConstants objCB;
+        XMStoreFloat4x4(&objCB.World, XMMatrixTranspose(XMLoadFloat4x4(&ri->World)));
+        objCB.MaterialIndex = 2; // Share the pulsing color of the Orb!
+
+        mCurrFrameResource->ObjectCB->CopyData(ri->ObjCBIndex, objCB);
+
+        auto addr = mCurrFrameResource->ObjectCB->Resource()->GetGPUVirtualAddress() + (ri->ObjCBIndex * objCBByteSize);
+        mCommandList->SetGraphicsRootConstantBufferView(1, addr);
+        mCommandList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
+    }
+
     auto b2 = CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
     mCommandList->ResourceBarrier(1, &b2);
 
@@ -345,6 +363,58 @@ void TowerGameApp::BuildTowerGeometry() {
             lightIndex++; // Increment so each box gets a unique ObjCBIndex
         }
     }
+
+    // 6. Energy Sparks (ObjCBIndex 117)
+    // We only need to define Positions. The GS will build the actual geometry.
+    std::vector<Vertex> sparkVertices;
+    std::vector<std::uint32_t> sparkIndices;
+
+    for (int i = 0; i < 50; ++i) {
+        Vertex v;
+        // Random point within a 60 unit radius around the orb
+        v.Pos.x = (MathHelper::RandF() * 120.0f) - 60.0f;
+        v.Pos.y = 1100.0f + ((MathHelper::RandF() * 40.0f) - 20.0f);
+        v.Pos.z = (MathHelper::RandF() * 120.0f) - 60.0f;
+
+        v.Normal = { 0, 1, 0 }; // Ignored by GS
+        v.TexC = { 0, 0 };      // Ignored by GS
+
+        sparkVertices.push_back(v);
+        sparkIndices.push_back(i);
+    }
+
+    // Build the MeshGeometry for the points
+    auto sparkGeo = std::make_unique<MeshGeometry>();
+    sparkGeo->Name = "sparkGeo";
+    sparkGeo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(), mCommandList.Get(), sparkVertices.data(), (UINT)sparkVertices.size() * sizeof(Vertex), sparkGeo->VertexBufferUploader);
+    sparkGeo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(), mCommandList.Get(), sparkIndices.data(), (UINT)sparkIndices.size() * sizeof(uint32_t), sparkGeo->IndexBufferUploader);
+    sparkGeo->VertexByteStride = sizeof(Vertex);
+    sparkGeo->VertexBufferByteSize = (UINT)sparkVertices.size() * sizeof(Vertex);
+    sparkGeo->IndexFormat = DXGI_FORMAT_R32_UINT;
+    sparkGeo->IndexBufferByteSize = (UINT)sparkIndices.size() * sizeof(uint32_t);
+
+    SubmeshGeometry sparkSub;
+    sparkSub.IndexCount = (UINT)sparkIndices.size();
+    sparkSub.StartIndexLocation = 0;
+    sparkSub.BaseVertexLocation = 0;
+    sparkGeo->DrawArgs["sparks"] = sparkSub;
+
+    mGeometries[sparkGeo->Name] = std::move(sparkGeo);
+
+    auto sparks = std::make_unique<RenderItem>();
+    XMStoreFloat4x4(&sparks->World, XMMatrixIdentity());
+    sparks->ObjCBIndex = 117; // Give it the next available index
+    sparks->Geo = mGeometries["sparkGeo"].get();
+
+    // CRITICAL: Tell the API these are POINTS, not triangles
+    sparks->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_POINTLIST;
+
+    sparks->IndexCount = sparkSub.IndexCount;
+    sparks->StartIndexLocation = sparkSub.StartIndexLocation;
+    sparks->BaseVertexLocation = sparkSub.BaseVertexLocation;
+
+    mSparkRitems.push_back(sparks.get());
+    mAllRitems.push_back(std::move(sparks));
 }
 
 void TowerGameApp::BuildRootSignature() {
@@ -360,6 +430,7 @@ void TowerGameApp::BuildRootSignature() {
 void TowerGameApp::BuildShadersAndInputLayout() {
     mvsByteCode = d3dUtil::CompileShader(L"shaders\\Default.hlsl", nullptr, "VS", "vs_5_0");
     mpsByteCode = d3dUtil::CompileShader(L"shaders\\Default.hlsl", nullptr, "PS", "ps_5_0");
+    mgsByteCode = d3dUtil::CompileShader(L"shaders\\Default.hlsl", nullptr, "GS", "gs_5_0");
     mInputLayout = {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
@@ -411,7 +482,13 @@ void TowerGameApp::BuildPSOs() {
     // but disable depth writes so it doesn't block objects behind it
     transparentDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
 
+    // --- Spark Particle PSO ---
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC sparkDesc = transparentDesc; // Copy the alpha blending settings
+    sparkDesc.GS = { reinterpret_cast<BYTE*>(mgsByteCode->GetBufferPointer()), mgsByteCode->GetBufferSize() };
+    sparkDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT;
+
     ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&transparentDesc, IID_PPV_ARGS(&mTransparentPSO)));
+    ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&sparkDesc, IID_PPV_ARGS(&mSparkPSO)));
 }
 
 void TowerGameApp::BuildFrameResources() {
