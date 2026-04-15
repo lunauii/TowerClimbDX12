@@ -31,6 +31,7 @@ private:
     // Pseudo-Physics
     float mVerticalVelocity = 0.0f;
     float eyeLevel = 10.0f;
+    float carHeight = 1000.0f + 12.0f; // add 12.0 so car is on "floor"
     bool mIsJumping = false;
     bool mHasWon = false;   
     virtual void OnMouseDown(WPARAM btnState, int x, int y) override;

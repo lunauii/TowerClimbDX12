@@ -85,6 +85,22 @@ void TowerGameApp::Update(const GameTimer& gt) {
     for (auto& ri : mOpaqueRitems) {
         if (ri->ObjCBIndex < 2) continue; // Skip walls (0) and floor (1)
 
+        // If it's the car, handle differently than platform
+        if (ri->ObjCBIndex == 118) {
+            // Collision check (AABB)
+            if (pos.x > 60.0f - 18.0f && pos.x < 60.0f + 18.0f &&
+                pos.z > 70.0f - 35.0f && pos.z < 70.0f + 35.0f) {
+
+                // If falling and eye-level is about to drop through the car
+                if (mVerticalVelocity <= 0 && pos.y >= carHeight + 4.5f && nextY <= carHeight + eyeLevel) {
+                    nextY = carHeight + eyeLevel; // Eye level height
+                    mVerticalVelocity = 0.0f;
+                    mIsJumping = false;
+                    break;
+                }
+            }
+        }
+
         // Calculate platform's current animated rotation (Automatic Movement Mark)
         float time = gt.TotalTime();
         float angle = 0.4f * time * (ri->ObjCBIndex % 2 == 0 ? 1 : -1);
@@ -516,7 +532,7 @@ void TowerGameApp::BuildRenderItems() {
 
     // 7. Car (OBjCBIndex 118)
     auto car = std::make_unique<RenderItem>();
-    XMStoreFloat4x4(&car->World, XMMatrixScaling(5.0f, 5.0f, 5.0f) * XMMatrixRotationRollPitchYaw(0.0f, 5.0f, 0.0f) * XMMatrixTranslation(60.0f, 12.0f, 70.0f));
+    XMStoreFloat4x4(&car->World, XMMatrixScaling(5.0f, 5.0f, 5.0f) * XMMatrixTranslation(60.0f, carHeight, 70.0f));
     car->ObjCBIndex = 118;
     car->Geo = mGeometries["carGeo"].get();
     car->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
