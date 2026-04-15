@@ -140,6 +140,23 @@ void TowerGameApp::Update(const GameTimer& gt) {
     XMStoreFloat4x4(&passCB.ViewProj, XMMatrixTranspose(viewProj));
     passCB.EyePosW = mCamera.GetPosition3f();
     passCB.TotalTime = gt.TotalTime();
+
+    float lightHeights[3] = { 50.0f, 550.0f, 1050.0f };
+    int lightIndex = 0;
+
+    for (int ring = 0; ring < 3; ++ring) {
+        for (int i = 0; i < 8; ++i) {
+            float angle = i * (MathHelper::Pi / 4.0f);
+
+            passCB.Lights[lightIndex].Position = { 145.0f * cos(angle), lightHeights[ring], 145.0f * sin(angle) };
+            passCB.Lights[lightIndex].Strength = { 0.8f, 0.8f, 0.2f };
+            passCB.Lights[lightIndex].FalloffStart = 20.0f;
+            passCB.Lights[lightIndex].FalloffEnd = 120.0f;
+
+            lightIndex++;
+        }
+    }
+
     mCurrFrameResource->PassCB->CopyData(0, passCB);
 }
 
@@ -172,14 +189,19 @@ void TowerGameApp::Draw(const GameTimer& gt) {
         mCommandList->IASetPrimitiveTopology(ri->PrimitiveType);
 
         XMMATRIX modelWorld = XMLoadFloat4x4(&ri->World);
-        if (ri->ObjCBIndex >= 2) {
+        if (ri->ObjCBIndex >= 2 && ri->ObjCBIndex <= 91) {
             float angle = 0.4f * gt.TotalTime() * (ri->ObjCBIndex % 2 == 0 ? 1 : -1);
             modelWorld = modelWorld * XMMatrixRotationY(angle);
         }
 
         ObjectConstants objCB;
         XMStoreFloat4x4(&objCB.World, XMMatrixTranspose(modelWorld));
-        objCB.MaterialIndex = (ri->ObjCBIndex >= 2) ? 1 : 0;
+        
+        // 0=Wall/Floor, 1=Platforms, 3=Wall Lights
+        if (ri->ObjCBIndex >= 93) objCB.MaterialIndex = 3;
+        else if (ri->ObjCBIndex >= 2) objCB.MaterialIndex = 1;
+        else objCB.MaterialIndex = 0;
+
         mCurrFrameResource->ObjectCB->CopyData(ri->ObjCBIndex, objCB);
 
         auto addr = mCurrFrameResource->ObjectCB->Resource()->GetGPUVirtualAddress() + (ri->ObjCBIndex * objCBByteSize);
@@ -197,7 +219,25 @@ void TowerGameApp::Draw(const GameTimer& gt) {
 
         ObjectConstants objCB;
         XMStoreFloat4x4(&objCB.World, XMMatrixTranspose(XMLoadFloat4x4(&ri->World)));
-        objCB.MaterialIndex = 2; // Orb material — handled in shader
+        objCB.MaterialIndex = 2; // Orb material ï¿½ handled in shader
+        mCurrFrameResource->ObjectCB->CopyData(ri->ObjCBIndex, objCB);
+
+        auto addr = mCurrFrameResource->ObjectCB->Resource()->GetGPUVirtualAddress() + (ri->ObjCBIndex * objCBByteSize);
+        mCommandList->SetGraphicsRootConstantBufferView(1, addr);
+        mCommandList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
+    }
+
+    // --- PASS 3: Draw Geometry Shader Sparks ---
+    mCommandList->SetPipelineState(mSparkPSO.Get());
+    for (auto& ri : mSparkRitems) {
+        mCommandList->IASetVertexBuffers(0, 1, &ri->Geo->VertexBufferView());
+        mCommandList->IASetIndexBuffer(&ri->Geo->IndexBufferView());
+        mCommandList->IASetPrimitiveTopology(ri->PrimitiveType); // Will set D3D_PRIMITIVE_TOPOLOGY_POINTLIST
+
+        ObjectConstants objCB;
+        XMStoreFloat4x4(&objCB.World, XMMatrixTranspose(XMLoadFloat4x4(&ri->World)));
+        objCB.MaterialIndex = 2; // Share the pulsing color of the Orb!
+
         mCurrFrameResource->ObjectCB->CopyData(ri->ObjCBIndex, objCB);
 
         auto addr = mCurrFrameResource->ObjectCB->Resource()->GetGPUVirtualAddress() + (ri->ObjCBIndex * objCBByteSize);
@@ -224,6 +264,7 @@ void TowerGameApp::BuildTowerGeometry() {
     GeometryGenerator::MeshData grid = geoGen.CreateGrid(400.0f, 400.0f, 20, 20);
     // NEW: Sphere for the goal orb at the top of the tower
     GeometryGenerator::MeshData sphere = geoGen.CreateSphere(20.0f, 32, 32);
+    GeometryGenerator::MeshData lightBox = geoGen.CreateBox(4.0f, 4.0f, 1.0f, 0);
 
     std::vector<Vertex> vertices;
     std::vector<std::uint32_t> indices;
@@ -239,11 +280,12 @@ void TowerGameApp::BuildTowerGeometry() {
         for (auto& i : data.Indices32) indices.push_back(i);
         };
 
-    SubmeshGeometry boxSub, cylSub, gridSub, sphereSub;
+    SubmeshGeometry boxSub, cylSub, gridSub, sphereSub, lightBoxSub;
     addMesh(box, boxSub);
     addMesh(cylinder, cylSub);
     addMesh(grid, gridSub);
-    addMesh(sphere, sphereSub); // NEW
+    addMesh(sphere, sphereSub);
+    addMesh(lightBox, lightBoxSub);
 
     auto geo = std::make_unique<MeshGeometry>();
     geo->Name = "towerGeo";
@@ -256,7 +298,8 @@ void TowerGameApp::BuildTowerGeometry() {
     geo->DrawArgs["box"] = boxSub;
     geo->DrawArgs["cylinder"] = cylSub;
     geo->DrawArgs["grid"] = gridSub;
-    geo->DrawArgs["sphere"] = sphereSub; // NEW
+    geo->DrawArgs["sphere"] = sphereSub;
+    geo->DrawArgs["lightBox"] = lightBoxSub;
     mGeometries[geo->Name] = std::move(geo);
 
     // NEW - Car
@@ -358,7 +401,7 @@ void TowerGameApp::BuildTowerGeometry() {
         mAllRitems.push_back(std::move(ri));
     }
 
-    // 4. NEW: Goal Orb — transparent sphere at the top of the tower (ObjCBIndex = 92)
+    // 4. Goal Orb ï¿½ transparent sphere at the top of the tower (ObjCBIndex = 92)
     auto orb = std::make_unique<RenderItem>();
     XMStoreFloat4x4(&orb->World, XMMatrixTranslation(0.0f, 1100.0f, 0.0f));
     orb->ObjCBIndex = 92; orb->Geo = mGeometries["towerGeo"].get();
@@ -375,6 +418,83 @@ void TowerGameApp::BuildTowerGeometry() {
     car->StartIndexLocation = car->Geo->DrawArgs["car"].StartIndexLocation;
     car->BaseVertexLocation = car->Geo->DrawArgs["car"].BaseVertexLocation;
     mAllRitems.push_back(std::move(car));
+    // 5. Wall Light Fixtures (ObjCBIndex 93 through 116)
+    float lightHeights[3] = { 50.0f, 550.0f, 1050.0f }; // Floor, Midpoint, Ceiling
+    int lightIndex = 0;
+
+    for (int ring = 0; ring < 3; ++ring) {
+        for (int i = 0; i < 8; ++i) {
+            auto ri = std::make_unique<RenderItem>();
+            float angle = i * (MathHelper::Pi / 4.0f);
+            float r = 148.0f;
+            float y = lightHeights[ring];
+
+            XMMATRIX world = XMMatrixRotationY(-angle) * XMMatrixTranslation(r * cos(angle), y, r * sin(angle));
+            XMStoreFloat4x4(&ri->World, world);
+
+            ri->ObjCBIndex = 93 + lightIndex;
+            ri->Geo = mGeometries["towerGeo"].get();
+            ri->IndexCount = lightBoxSub.IndexCount;
+            ri->StartIndexLocation = lightBoxSub.StartIndexLocation;
+            ri->BaseVertexLocation = lightBoxSub.BaseVertexLocation;
+            mOpaqueRitems.push_back(ri.get());
+            mAllRitems.push_back(std::move(ri));
+
+            lightIndex++; // Increment so each box gets a unique ObjCBIndex
+        }
+    }
+
+    // 6. Energy Sparks (ObjCBIndex 117)
+    // We only need to define Positions. The GS will build the actual geometry.
+    std::vector<Vertex> sparkVertices;
+    std::vector<std::uint32_t> sparkIndices;
+
+    for (int i = 0; i < 50; ++i) {
+        Vertex v;
+        // Random point within a 60 unit radius around the orb
+        v.Pos.x = (MathHelper::RandF() * 120.0f) - 60.0f;
+        v.Pos.y = 1100.0f + ((MathHelper::RandF() * 40.0f) - 20.0f);
+        v.Pos.z = (MathHelper::RandF() * 120.0f) - 60.0f;
+
+        v.Normal = { 0, 1, 0 }; // Ignored by GS
+        v.TexC = { 0, 0 };      // Ignored by GS
+
+        sparkVertices.push_back(v);
+        sparkIndices.push_back(i);
+    }
+
+    // Build the MeshGeometry for the points
+    auto sparkGeo = std::make_unique<MeshGeometry>();
+    sparkGeo->Name = "sparkGeo";
+    sparkGeo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(), mCommandList.Get(), sparkVertices.data(), (UINT)sparkVertices.size() * sizeof(Vertex), sparkGeo->VertexBufferUploader);
+    sparkGeo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(), mCommandList.Get(), sparkIndices.data(), (UINT)sparkIndices.size() * sizeof(uint32_t), sparkGeo->IndexBufferUploader);
+    sparkGeo->VertexByteStride = sizeof(Vertex);
+    sparkGeo->VertexBufferByteSize = (UINT)sparkVertices.size() * sizeof(Vertex);
+    sparkGeo->IndexFormat = DXGI_FORMAT_R32_UINT;
+    sparkGeo->IndexBufferByteSize = (UINT)sparkIndices.size() * sizeof(uint32_t);
+
+    SubmeshGeometry sparkSub;
+    sparkSub.IndexCount = (UINT)sparkIndices.size();
+    sparkSub.StartIndexLocation = 0;
+    sparkSub.BaseVertexLocation = 0;
+    sparkGeo->DrawArgs["sparks"] = sparkSub;
+
+    mGeometries[sparkGeo->Name] = std::move(sparkGeo);
+
+    auto sparks = std::make_unique<RenderItem>();
+    XMStoreFloat4x4(&sparks->World, XMMatrixIdentity());
+    sparks->ObjCBIndex = 117; // Give it the next available index
+    sparks->Geo = mGeometries["sparkGeo"].get();
+
+    // CRITICAL: Tell the API these are POINTS, not triangles
+    sparks->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_POINTLIST;
+
+    sparks->IndexCount = sparkSub.IndexCount;
+    sparks->StartIndexLocation = sparkSub.StartIndexLocation;
+    sparks->BaseVertexLocation = sparkSub.BaseVertexLocation;
+
+    mSparkRitems.push_back(sparks.get());
+    mAllRitems.push_back(std::move(sparks));
 }
 
 void TowerGameApp::BuildRootSignature() {
@@ -390,6 +510,7 @@ void TowerGameApp::BuildRootSignature() {
 void TowerGameApp::BuildShadersAndInputLayout() {
     mvsByteCode = d3dUtil::CompileShader(L"shaders\\Default.hlsl", nullptr, "VS", "vs_5_0");
     mpsByteCode = d3dUtil::CompileShader(L"shaders\\Default.hlsl", nullptr, "PS", "ps_5_0");
+    mgsByteCode = d3dUtil::CompileShader(L"shaders\\Default.hlsl", nullptr, "GS", "gs_5_0");
     mInputLayout = {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
@@ -420,7 +541,7 @@ void TowerGameApp::BuildPSOs() {
     // Opaque PSO (unchanged)
     ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&mOpaquePSO)));
 
-    // --- NEW: Transparent PSO — copy opaque desc, then enable alpha blending ---
+    // --- NEW: Transparent PSO ï¿½ copy opaque desc, then enable alpha blending ---
     D3D12_GRAPHICS_PIPELINE_STATE_DESC transparentDesc = psoDesc;
 
     D3D12_RENDER_TARGET_BLEND_DESC blendDesc;
@@ -441,7 +562,13 @@ void TowerGameApp::BuildPSOs() {
     // but disable depth writes so it doesn't block objects behind it
     transparentDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
 
+    // --- Spark Particle PSO ---
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC sparkDesc = transparentDesc; // Copy the alpha blending settings
+    sparkDesc.GS = { reinterpret_cast<BYTE*>(mgsByteCode->GetBufferPointer()), mgsByteCode->GetBufferSize() };
+    sparkDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT;
+
     ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&transparentDesc, IID_PPV_ARGS(&mTransparentPSO)));
+    ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&sparkDesc, IID_PPV_ARGS(&mSparkPSO)));
 }
 
 void TowerGameApp::BuildFrameResources() {

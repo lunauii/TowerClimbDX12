@@ -53,10 +53,13 @@ private:
     ComPtr<ID3D12PipelineState> mTransparentPSO = nullptr;   
     ComPtr<ID3DBlob> mvsByteCode = nullptr;
     ComPtr<ID3DBlob> mpsByteCode = nullptr;
+    ComPtr<ID3DBlob> mgsByteCode = nullptr;            
+    ComPtr<ID3D12PipelineState> mSparkPSO = nullptr;   
     std::vector<D3D12_INPUT_ELEMENT_DESC> mInputLayout;
     std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> mGeometries;
     std::vector<std::unique_ptr<RenderItem>> mAllRitems;
-    std::vector<RenderItem*> mOpaqueRitems;                 
+    std::vector<RenderItem*> mOpaqueRitems;   
+    std::vector<RenderItem*> mSparkRitems;
     RenderItem* mOrbRitem = nullptr;                         
     RenderItem* mLavaRitem = nullptr;
     Camera mCamera;
