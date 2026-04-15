@@ -30,6 +30,7 @@ private:
     float mYaw = 0.0f;
     // Pseudo-Physics
     float mVerticalVelocity = 0.0f;
+    float eyeLevel = 10.0f;
     bool mIsJumping = false;
     bool mHasWon = false;   
     virtual void OnMouseDown(WPARAM btnState, int x, int y) override;
