@@ -31,6 +31,7 @@ bool TowerGameApp::Initialize() {
     BuildRootSignature();
     BuildShadersAndInputLayout();
     BuildTowerGeometry();
+    BuildCarGeometry();
     BuildFrameResources();
     BuildPSOs();
 
@@ -155,7 +156,7 @@ void TowerGameApp::Draw(const GameTimer& gt) {
 
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = CurrentBackBufferView();
     D3D12_CPU_DESCRIPTOR_HANDLE dsv = DepthStencilView();
-    mCommandList->ClearRenderTargetView(rtv, Colors::Black, 0, nullptr);
+    mCommandList->ClearRenderTargetView(rtv, Colors::LightBlue, 0, nullptr);
     mCommandList->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
     mCommandList->OMSetRenderTargets(1, &rtv, true, &dsv);
 
@@ -258,6 +259,76 @@ void TowerGameApp::BuildTowerGeometry() {
     geo->DrawArgs["sphere"] = sphereSub; // NEW
     mGeometries[geo->Name] = std::move(geo);
 
+    // NEW - Car
+    std::ifstream fin("Models/car.txt");
+
+    if (!fin)
+    {
+        MessageBox(0, L"car.txt not found.", 0, 0);
+        return;
+    }
+
+    UINT vcount = 0;
+    UINT tcount = 0;
+    std::string ignore;
+
+    fin >> ignore >> vcount;
+    fin >> ignore >> tcount;
+    fin >> ignore >> ignore >> ignore >> ignore;
+
+    std::vector<Vertex> carVertices(vcount);
+    for (UINT i = 0; i < vcount; ++i)
+    {
+        fin >> carVertices[i].Pos.x >> carVertices[i].Pos.y >> carVertices[i].Pos.z;
+        fin >> carVertices[i].Normal.x >> carVertices[i].Normal.y >> carVertices[i].Normal.z;
+    }
+
+    fin >> ignore;
+    fin >> ignore;
+    fin >> ignore;
+
+    std::vector<std::int32_t> carIndices(3 * tcount);
+    for (UINT i = 0; i < tcount; ++i)
+    {
+        fin >> carIndices[i * 3 + 0] >> carIndices[i * 3 + 1] >> carIndices[i * 3 + 2];
+    }
+
+    fin.close();
+
+    const UINT vbByteSize = (UINT)carVertices.size() * sizeof(Vertex);
+
+    const UINT ibByteSize = (UINT)carIndices.size() * sizeof(std::int32_t);
+
+    auto geoForCar = std::make_unique<MeshGeometry>();
+    geoForCar->Name = "carGeo";
+
+    ThrowIfFailed(D3DCreateBlob(vbByteSize, &geo->VertexBufferCPU));
+    CopyMemory(geo->VertexBufferCPU->GetBufferPointer(), carVertices.data(), vbByteSize);
+
+    ThrowIfFailed(D3DCreateBlob(ibByteSize, &geo->IndexBufferCPU));
+    CopyMemory(geo->IndexBufferCPU->GetBufferPointer(), carIndices.data(), ibByteSize);
+
+    geoForCar->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
+        mCommandList.Get(), carVertices.data(), vbByteSize, geo->VertexBufferUploader);
+
+    geoForCar->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
+        mCommandList.Get(), carIndices.data(), ibByteSize, geo->IndexBufferUploader);
+
+    geoForCar->VertexByteStride = sizeof(Vertex);
+    geoForCar->VertexBufferByteSize = vbByteSize;
+    geoForCar->IndexFormat = DXGI_FORMAT_R32_UINT;
+    geoForCar->IndexBufferByteSize = ibByteSize;
+
+    SubmeshGeometry submesh;
+    submesh.IndexCount = (UINT)carIndices.size();
+    // THESE ARE WRONG - FIX LATER
+    submesh.StartIndexLocation = 0;
+    submesh.BaseVertexLocation = 0;
+
+    geoForCar->DrawArgs["car"] = submesh;
+
+    mGeometries[geoForCar->Name] = std::move(geoForCar);
+
     // 1. Tower Walls
     auto walls = std::make_unique<RenderItem>();
     XMStoreFloat4x4(&walls->World, XMMatrixTranslation(0, 450, 0));
@@ -294,6 +365,16 @@ void TowerGameApp::BuildTowerGeometry() {
     orb->IndexCount = sphereSub.IndexCount; orb->StartIndexLocation = sphereSub.StartIndexLocation; orb->BaseVertexLocation = sphereSub.BaseVertexLocation;
     mOrbRitem = orb.get(); // Keep raw pointer for Draw()
     mAllRitems.push_back(std::move(orb));
+
+    auto car = std::make_unique<RenderItem>();
+    XMStoreFloat4x4(&car->World, XMMatrixScaling(5.0f, 5.0f, 5.0f)* XMMatrixTranslation(0.0f, 5.0f, -30.0f));
+    car->ObjCBIndex = 2;
+    car->Geo = mGeometries["carGeo"].get();
+    car->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+    car->IndexCount = car->Geo->DrawArgs["car"].IndexCount;
+    car->StartIndexLocation = car->Geo->DrawArgs["car"].StartIndexLocation;
+    car->BaseVertexLocation = car->Geo->DrawArgs["car"].BaseVertexLocation;
+    mAllRitems.push_back(std::move(car));
 }
 
 void TowerGameApp::BuildRootSignature() {

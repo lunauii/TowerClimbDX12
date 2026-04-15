@@ -39,6 +39,8 @@ private:
     virtual void Update(const GameTimer& gt) override;
     virtual void Draw(const GameTimer& gt) override;
     void BuildTowerGeometry();
+    void BuildCarGeometry();
+    void BuildRenderItems();
     void BuildShadersAndInputLayout();
     void BuildPSOs();
     void BuildFrameResources();
